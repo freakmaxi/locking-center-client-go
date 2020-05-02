@@ -3,6 +3,8 @@
 The Go Connector of Locking-Center that is a mutex point to synchronize access between different services. You can limit the 
 execution between services and create queueing for the operation.
 
+- [Locking-Center Server](https://github.com/freakmaxi/locking-center)
+
 #### Installation
 
 `go get github.com/freakmaxi/locking-center-client-go/mutex`
