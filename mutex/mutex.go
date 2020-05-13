@@ -35,16 +35,8 @@ func NewLockingCenter(address string) (LockingCenter, error) {
 	return lc, nil
 }
 
-func (l *lockingCenter) connect() (*net.TCPConn, error) {
-	conn, err := net.DialTCP("tcp", nil, l.address)
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
-}
-
 func (l *lockingCenter) ping() error {
-	conn, err := l.connect()
+	conn, err := net.DialTCP("tcp", nil, l.address)
 	if err != nil {
 		return err
 	}
@@ -87,7 +79,7 @@ func (l *lockingCenter) result(conn *net.TCPConn) bool {
 
 func (l *lockingCenter) Lock(key string) {
 	query := func() bool {
-		conn, err := l.connect()
+		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
 			fmt.Printf("ERROR: connection failure: %s\n", err)
 			return false
@@ -109,7 +101,7 @@ func (l *lockingCenter) Lock(key string) {
 
 func (l *lockingCenter) Unlock(key string) {
 	query := func() bool {
-		conn, err := l.connect()
+		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
 			fmt.Printf("ERROR: connection failure: %s\n", err)
 			return false
@@ -136,7 +128,7 @@ func (l *lockingCenter) Wait(key string) {
 
 func (l *lockingCenter) Reset(key string) {
 	query := func() bool {
-		conn, err := l.connect()
+		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
 			fmt.Printf("ERROR: connection failure: %s\n", err)
 			return false
