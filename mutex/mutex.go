@@ -57,7 +57,7 @@ func (l *lockingCenter) ping() error {
 }
 
 func (l *lockingCenter) preparePackage(key string, emptyAllowed bool, action mutexAction) ([]byte, error) {
-	if len(key) == 0 || len(key) > 128 {
+	if (!emptyAllowed && len(key) == 0) || len(key) > 128 {
 		return nil, fmt.Errorf("key can not be empty or more than 128 characters")
 	}
 
