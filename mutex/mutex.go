@@ -21,12 +21,12 @@ const (
 var queueRetryDuration = time.Millisecond * 500
 
 type LockingCenter interface {
-	Lock(key string)
+	Lock(key string, sourceAddr *string)
 	Unlock(key string)
 	Wait(key string)
 
 	ResetByKey(key string)
-	ResetBySource(sourceAddr string)
+	ResetBySource(sourceAddr *string)
 }
 
 type lockingCenter struct {
@@ -56,32 +56,53 @@ func (l *lockingCenter) ping() error {
 	return conn.Close()
 }
 
-func (l *lockingCenter) preparePackage(key string, emptyAllowed bool, action mutexAction) ([]byte, error) {
-	if (!emptyAllowed && len(key) == 0) || len(key) > 128 {
+func (l *lockingCenter) preparePackage(action mutexAction, key string, sourceAddr *string) ([]byte, error) {
+	if action != maResetBySource && len(key) == 0 || len(key) > 128 {
 		return nil, fmt.Errorf("key can not be empty or more than 128 characters")
 	}
 
 	data := make([]byte, 0)
 	buffer := bytes.NewBuffer(data)
 
-	keySize := int8(len(key))
-	if err := binary.Write(buffer, binary.LittleEndian, keySize); err != nil {
-		return nil, err
-	}
-
-	if err := binary.Write(buffer, binary.LittleEndian, []byte(key)); err != nil {
-		return nil, err
-	}
-
 	if err := binary.Write(buffer, binary.LittleEndian, action); err != nil {
 		return nil, err
+	}
+
+	switch action {
+	case maLock, maUnlock, maResetByKey:
+		keySize := int8(len(key))
+		if err := binary.Write(buffer, binary.LittleEndian, keySize); err != nil {
+			return nil, err
+		}
+
+		if err := binary.Write(buffer, binary.LittleEndian, []byte(key)); err != nil {
+			return nil, err
+		}
+	}
+
+	switch action {
+	case maLock, maResetBySource:
+		sourceAddrSize := int8(0)
+		if sourceAddr != nil {
+			sourceAddrSize = int8(len(*sourceAddr))
+		}
+
+		if err := binary.Write(buffer, binary.LittleEndian, sourceAddrSize); err != nil {
+			return nil, err
+		}
+
+		if sourceAddr != nil {
+			if err := binary.Write(buffer, binary.LittleEndian, []byte(*sourceAddr)); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return buffer.Bytes(), nil
 }
 
-func (l *lockingCenter) query(conn *net.TCPConn, key string, emptyAllowed bool, action mutexAction) error {
-	payload, err := l.preparePackage(key, emptyAllowed, action)
+func (l *lockingCenter) query(conn *net.TCPConn, action mutexAction, key string, sourceAddr *string) error {
+	payload, err := l.preparePackage(action, key, sourceAddr)
 	if err != nil {
 		return err
 	}
@@ -107,7 +128,7 @@ func (l *lockingCenter) result(conn *net.TCPConn) bool {
 	return string(r) == "+"
 }
 
-func (l *lockingCenter) Lock(key string) {
+func (l *lockingCenter) Lock(key string, sourceAddr *string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -116,7 +137,7 @@ func (l *lockingCenter) Lock(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, false, maLock); err != nil {
+		if err := l.query(conn, maLock, key, sourceAddr); err != nil {
 			fmt.Printf("ERROR: locking error: %s\n", err)
 			return false
 		}
@@ -138,7 +159,7 @@ func (l *lockingCenter) Unlock(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, false, maUnlock); err != nil {
+		if err := l.query(conn, maUnlock, key, nil); err != nil {
 			fmt.Printf("ERROR: unlocking error: %s\n", err)
 			return false
 		}
@@ -152,7 +173,7 @@ func (l *lockingCenter) Unlock(key string) {
 }
 
 func (l *lockingCenter) Wait(key string) {
-	l.Lock(key)
+	l.Lock(key, nil)
 	defer l.Unlock(key)
 }
 
@@ -165,7 +186,7 @@ func (l *lockingCenter) ResetByKey(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, false, maResetByKey); err != nil {
+		if err := l.query(conn, maResetByKey, key, nil); err != nil {
 			fmt.Printf("ERROR: reseting error: %s\n", err)
 			return false
 		}
@@ -178,7 +199,7 @@ func (l *lockingCenter) ResetByKey(key string) {
 	}
 }
 
-func (l *lockingCenter) ResetBySource(sourceAddr string) {
+func (l *lockingCenter) ResetBySource(sourceAddr *string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -187,7 +208,7 @@ func (l *lockingCenter) ResetBySource(sourceAddr string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, sourceAddr, true, maResetBySource); err != nil {
+		if err := l.query(conn, maResetBySource, "", sourceAddr); err != nil {
 			fmt.Printf("ERROR: reseting error: %s\n", err)
 			return false
 		}
