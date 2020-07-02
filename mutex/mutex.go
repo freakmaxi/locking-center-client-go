@@ -9,11 +9,24 @@ import (
 	"time"
 )
 
+type mutexAction byte
+
+const (
+	maLock          mutexAction = 1
+	maUnlock                    = 2
+	maResetByKey                = 3
+	maResetBySource             = 4
+)
+
+var queueRetryDuration = time.Millisecond * 500
+
 type LockingCenter interface {
 	Lock(key string)
 	Unlock(key string)
 	Wait(key string)
-	Reset(key string)
+
+	ResetByKey(key string)
+	ResetBySource(sourceAddr string)
 }
 
 type lockingCenter struct {
@@ -43,7 +56,7 @@ func (l *lockingCenter) ping() error {
 	return conn.Close()
 }
 
-func (l *lockingCenter) preparePackage(key string, action byte) ([]byte, error) {
+func (l *lockingCenter) preparePackage(key string, emptyAllowed bool, action mutexAction) ([]byte, error) {
 	if len(key) == 0 || len(key) > 128 {
 		return nil, fmt.Errorf("key can not be empty or more than 128 characters")
 	}
@@ -67,6 +80,23 @@ func (l *lockingCenter) preparePackage(key string, action byte) ([]byte, error) 
 	return buffer.Bytes(), nil
 }
 
+func (l *lockingCenter) query(conn *net.TCPConn, key string, emptyAllowed bool, action mutexAction) error {
+	payload, err := l.preparePackage(key, emptyAllowed, action)
+	if err != nil {
+		return err
+	}
+
+	if _, err := conn.Write(payload); err != nil {
+		return err
+	}
+
+	if !l.result(conn) {
+		return fmt.Errorf("remote server execution error")
+	}
+
+	return nil
+}
+
 func (l *lockingCenter) result(conn *net.TCPConn) bool {
 	r := make([]byte, 1)
 
@@ -84,9 +114,9 @@ func (l *lockingCenter) Lock(key string) {
 			fmt.Printf("ERROR: connection failure: %s\n", err)
 			return false
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, 1); err != nil {
+		if err := l.query(conn, key, false, maLock); err != nil {
 			fmt.Printf("ERROR: locking error: %s\n", err)
 			return false
 		}
@@ -95,7 +125,7 @@ func (l *lockingCenter) Lock(key string) {
 	}
 
 	for !query() {
-		time.Sleep(time.Second)
+		time.Sleep(queueRetryDuration)
 	}
 }
 
@@ -106,9 +136,9 @@ func (l *lockingCenter) Unlock(key string) {
 			fmt.Printf("ERROR: connection failure: %s\n", err)
 			return false
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, 2); err != nil {
+		if err := l.query(conn, key, false, maUnlock); err != nil {
 			fmt.Printf("ERROR: unlocking error: %s\n", err)
 			return false
 		}
@@ -117,7 +147,7 @@ func (l *lockingCenter) Unlock(key string) {
 	}
 
 	for !query() {
-		time.Sleep(time.Second)
+		time.Sleep(queueRetryDuration)
 	}
 }
 
@@ -126,16 +156,16 @@ func (l *lockingCenter) Wait(key string) {
 	defer l.Unlock(key)
 }
 
-func (l *lockingCenter) Reset(key string) {
+func (l *lockingCenter) ResetByKey(key string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
 			fmt.Printf("ERROR: connection failure: %s\n", err)
 			return false
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, 3); err != nil {
+		if err := l.query(conn, key, false, maResetByKey); err != nil {
 			fmt.Printf("ERROR: reseting error: %s\n", err)
 			return false
 		}
@@ -144,23 +174,28 @@ func (l *lockingCenter) Reset(key string) {
 	}
 
 	for !query() {
-		time.Sleep(time.Second)
+		time.Sleep(queueRetryDuration)
 	}
 }
 
-func (l *lockingCenter) query(conn *net.TCPConn, key string, action byte) error {
-	payload, err := l.preparePackage(key, action)
-	if err != nil {
-		return err
+func (l *lockingCenter) ResetBySource(key string) {
+	query := func() bool {
+		conn, err := net.DialTCP("tcp", nil, l.address)
+		if err != nil {
+			fmt.Printf("ERROR: connection failure: %s\n", err)
+			return false
+		}
+		defer func() { _ = conn.Close() }()
+
+		if err := l.query(conn, key, true, maResetBySource); err != nil {
+			fmt.Printf("ERROR: reseting error: %s\n", err)
+			return false
+		}
+
+		return true
 	}
 
-	if _, err := conn.Write(payload); err != nil {
-		return err
+	for !query() {
+		time.Sleep(queueRetryDuration)
 	}
-
-	if !l.result(conn) {
-		return fmt.Errorf("remote server execution error")
-	}
-
-	return nil
 }
