@@ -178,7 +178,7 @@ func (l *lockingCenter) ResetByKey(key string) {
 	}
 }
 
-func (l *lockingCenter) ResetBySource(key string) {
+func (l *lockingCenter) ResetBySource(sourceAddr string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -187,7 +187,7 @@ func (l *lockingCenter) ResetBySource(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, key, true, maResetBySource); err != nil {
+		if err := l.query(conn, sourceAddr, true, maResetBySource); err != nil {
 			fmt.Printf("ERROR: reseting error: %s\n", err)
 			return false
 		}
