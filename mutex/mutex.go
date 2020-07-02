@@ -13,9 +13,9 @@ type mutexAction byte
 
 const (
 	maLock          mutexAction = 1
-	maUnlock                    = 2
-	maResetByKey                = 3
-	maResetBySource             = 4
+	maUnlock        mutexAction = 2
+	maResetByKey    mutexAction = 3
+	maResetBySource mutexAction = 4
 )
 
 var queueRetryDuration = time.Millisecond * 500
