@@ -21,7 +21,7 @@ const (
 var queueRetryDuration = time.Millisecond * 500
 
 type LockingCenter interface {
-	Lock(key string, sourceAddr *string)
+	Lock(key string)
 	Unlock(key string)
 	Wait(key string)
 
@@ -30,17 +30,23 @@ type LockingCenter interface {
 }
 
 type lockingCenter struct {
-	address *net.TCPAddr
+	address    *net.TCPAddr
+	sourceAddr *string
 }
 
 func NewLockingCenter(address string) (LockingCenter, error) {
+	return NewLockingCenterWithSourceAddr(address, nil)
+}
+
+func NewLockingCenterWithSourceAddr(address string, sourceAddr *string) (LockingCenter, error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err
 	}
 
 	lc := &lockingCenter{
-		address: addr,
+		address:    addr,
+		sourceAddr: sourceAddr,
 	}
 	if err := lc.ping(); err != nil {
 		return nil, err
@@ -128,7 +134,7 @@ func (l *lockingCenter) result(conn *net.TCPConn) bool {
 	return string(r) == "+"
 }
 
-func (l *lockingCenter) Lock(key string, sourceAddr *string) {
+func (l *lockingCenter) Lock(key string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -137,7 +143,7 @@ func (l *lockingCenter) Lock(key string, sourceAddr *string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, maLock, key, sourceAddr); err != nil {
+		if err := l.query(conn, maLock, key, l.sourceAddr); err != nil {
 			fmt.Printf("ERROR: locking error: %s\n", err)
 			return false
 		}
@@ -173,7 +179,7 @@ func (l *lockingCenter) Unlock(key string) {
 }
 
 func (l *lockingCenter) Wait(key string) {
-	l.Lock(key, nil)
+	l.Lock(key)
 	defer l.Unlock(key)
 }
 
