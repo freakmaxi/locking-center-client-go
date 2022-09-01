@@ -138,13 +138,13 @@ func (l *lockingCenter) Lock(key string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
-			fmt.Printf("ERROR: connection failure: %s\n", err)
+			fmt.Printf("WARN: connection failure (keep trying): %s\n", err)
 			return false
 		}
 		defer func() { _ = conn.Close() }()
 
 		if err := l.query(conn, maLock, key, l.sourceAddr); err != nil {
-			fmt.Printf("ERROR: locking error: %s\n", err)
+			fmt.Printf("WARN: locking error (keep trying): %s\n", err)
 			return false
 		}
 
@@ -160,13 +160,13 @@ func (l *lockingCenter) Unlock(key string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
-			fmt.Printf("ERROR: connection failure: %s\n", err)
+			fmt.Printf("WARN: connection failure (keep trying): %s\n", err)
 			return false
 		}
 		defer func() { _ = conn.Close() }()
 
 		if err := l.query(conn, maUnlock, key, nil); err != nil {
-			fmt.Printf("ERROR: unlocking error: %s\n", err)
+			fmt.Printf("WARN: unlocking error (keep trying): %s\n", err)
 			return false
 		}
 
@@ -187,13 +187,13 @@ func (l *lockingCenter) ResetByKey(key string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
-			fmt.Printf("ERROR: connection failure: %s\n", err)
+			fmt.Printf("WARN: connection failure (keep trying): %s\n", err)
 			return false
 		}
 		defer func() { _ = conn.Close() }()
 
 		if err := l.query(conn, maResetByKey, key, nil); err != nil {
-			fmt.Printf("ERROR: reseting error: %s\n", err)
+			fmt.Printf("WARN: reseting error (keep trying): %s\n", err)
 			return false
 		}
 
@@ -209,13 +209,13 @@ func (l *lockingCenter) ResetBySource(sourceAddr *string) {
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
-			fmt.Printf("ERROR: connection failure: %s\n", err)
+			fmt.Printf("WARN: connection failure (keep trying): %s\n", err)
 			return false
 		}
 		defer func() { _ = conn.Close() }()
 
 		if err := l.query(conn, maResetBySource, "", sourceAddr); err != nil {
-			fmt.Printf("ERROR: reseting error: %s\n", err)
+			fmt.Printf("WARN: reseting error (keep trying): %s\n", err)
 			return false
 		}
 
