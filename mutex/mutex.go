@@ -22,6 +22,7 @@ var queueRetryDuration = time.Millisecond * 500
 
 type LockingCenter interface {
 	Lock(key string)
+	TryLock(key string) bool
 	Unlock(key string)
 	Wait(key string)
 
@@ -107,31 +108,33 @@ func (l *lockingCenter) preparePackage(action mutexAction, key string, sourceAdd
 	return buffer.Bytes(), nil
 }
 
-func (l *lockingCenter) query(conn *net.TCPConn, action mutexAction, key string, sourceAddr *string) error {
+func (l *lockingCenter) query(conn *net.TCPConn, action mutexAction, key string, sourceAddr *string) (int, error) {
 	payload, err := l.preparePackage(action, key, sourceAddr)
 	if err != nil {
-		return err
+		return -1, err
 	}
 
 	if _, err := conn.Write(payload); err != nil {
-		return err
+		return -1, err
 	}
 
-	if !l.result(conn) {
-		return fmt.Errorf("remote server execution error")
+	res := l.result(conn)
+	if res == -1 {
+		return -1, fmt.Errorf("remote server execution error")
 	}
-
-	return nil
+	return res, nil
 }
 
-func (l *lockingCenter) result(conn *net.TCPConn) bool {
+func (l *lockingCenter) result(conn *net.TCPConn) int {
 	r := make([]byte, 1)
 
 	if _, err := io.ReadAtLeast(conn, r, len(r)); err != nil {
-		return false
+		return -1
 	}
-
-	return string(r) == "+"
+	if string(r) != "+" {
+		return 0
+	}
+	return 1
 }
 
 func (l *lockingCenter) Lock(key string) {
@@ -143,16 +146,42 @@ func (l *lockingCenter) Lock(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, maLock, key, l.sourceAddr); err != nil {
+		res, err := l.query(conn, maLock, key, l.sourceAddr)
+		if err != nil {
 			fmt.Printf("WARN: locking error (keep trying): %s\n", err)
 			return false
 		}
-
-		return true
+		return res == 1
 	}
 
 	for !query() {
 		time.Sleep(queueRetryDuration)
+	}
+}
+
+func (l *lockingCenter) TryLock(key string) bool {
+	query := func() int {
+		conn, err := net.DialTCP("tcp", nil, l.address)
+		if err != nil {
+			fmt.Printf("WARN: connection failure (keep trying): %s\n", err)
+			return -1
+		}
+		defer func() { _ = conn.Close() }()
+
+		res, err := l.query(conn, maLock, key, l.sourceAddr)
+		if err != nil {
+			fmt.Printf("WARN: try locking error (keep trying): %s\n", err)
+		}
+		return res
+	}
+
+	for {
+		res := query()
+		if res == -1 {
+			time.Sleep(queueRetryDuration)
+			continue
+		}
+		return res == 1
 	}
 }
 
@@ -165,12 +194,12 @@ func (l *lockingCenter) Unlock(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, maUnlock, key, nil); err != nil {
+		res, err := l.query(conn, maUnlock, key, nil)
+		if err != nil {
 			fmt.Printf("WARN: unlocking error (keep trying): %s\n", err)
 			return false
 		}
-
-		return true
+		return res == 1
 	}
 
 	for !query() {
@@ -192,12 +221,12 @@ func (l *lockingCenter) ResetByKey(key string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, maResetByKey, key, nil); err != nil {
-			fmt.Printf("WARN: reseting error (keep trying): %s\n", err)
+		res, err := l.query(conn, maResetByKey, key, nil)
+		if err != nil {
+			fmt.Printf("WARN: resetting error (keep trying): %s\n", err)
 			return false
 		}
-
-		return true
+		return res == 1
 	}
 
 	for !query() {
@@ -214,12 +243,12 @@ func (l *lockingCenter) ResetBySource(sourceAddr *string) {
 		}
 		defer func() { _ = conn.Close() }()
 
-		if err := l.query(conn, maResetBySource, "", sourceAddr); err != nil {
+		res, err := l.query(conn, maResetBySource, "", sourceAddr)
+		if err != nil {
 			fmt.Printf("WARN: reseting error (keep trying): %s\n", err)
 			return false
 		}
-
-		return true
+		return res == 1
 	}
 
 	for !query() {
