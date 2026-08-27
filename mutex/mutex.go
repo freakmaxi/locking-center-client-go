@@ -20,6 +20,22 @@ const (
 
 var queueRetryDuration = time.Millisecond * 500
 
+// maxValueSize is the largest key or source address a request can carry. The
+// server reads a size as a signed byte, so anything above 127 can never be sent
+// and is a caller mistake, not a transient failure.
+const maxValueSize = 127
+
+// checkKey fails fast on a key that can never succeed, rather than letting the
+// keep-trying loops spin on it forever.
+func checkKey(key string) {
+	if len(key) == 0 {
+		panic("locking-center: key can not be empty")
+	}
+	if len(key) > maxValueSize {
+		panic(fmt.Sprintf("locking-center: key can not be longer than %d bytes", maxValueSize))
+	}
+}
+
 type LockingCenter interface {
 	Lock(key string)
 	TryLock(key string) bool
@@ -45,6 +61,10 @@ func NewLockingCenterWithSourceAddr(address string, sourceAddr *string) (Locking
 		return nil, err
 	}
 
+	if sourceAddr != nil && len(*sourceAddr) > maxValueSize {
+		return nil, fmt.Errorf("source address can not be longer than %d bytes", maxValueSize)
+	}
+
 	lc := &lockingCenter{
 		address:    addr,
 		sourceAddr: sourceAddr,
@@ -64,10 +84,6 @@ func (l *lockingCenter) ping() error {
 }
 
 func (l *lockingCenter) preparePackage(action mutexAction, key string, sourceAddr *string) ([]byte, error) {
-	if action != maResetBySource && len(key) == 0 || len(key) > 128 {
-		return nil, fmt.Errorf("key can not be empty or more than 128 characters")
-	}
-
 	data := make([]byte, 0)
 	buffer := bytes.NewBuffer(data)
 
@@ -138,6 +154,8 @@ func (l *lockingCenter) result(conn *net.TCPConn) int {
 }
 
 func (l *lockingCenter) Lock(key string) {
+	checkKey(key)
+
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -160,6 +178,8 @@ func (l *lockingCenter) Lock(key string) {
 }
 
 func (l *lockingCenter) TryLock(key string) bool {
+	checkKey(key)
+
 	query := func() int {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -186,6 +206,8 @@ func (l *lockingCenter) TryLock(key string) bool {
 }
 
 func (l *lockingCenter) Unlock(key string) {
+	checkKey(key)
+
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -213,6 +235,8 @@ func (l *lockingCenter) Wait(key string) {
 }
 
 func (l *lockingCenter) ResetByKey(key string) {
+	checkKey(key)
+
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
@@ -235,6 +259,10 @@ func (l *lockingCenter) ResetByKey(key string) {
 }
 
 func (l *lockingCenter) ResetBySource(sourceAddr *string) {
+	if sourceAddr != nil && len(*sourceAddr) > maxValueSize {
+		panic(fmt.Sprintf("locking-center: source address can not be longer than %d bytes", maxValueSize))
+	}
+
 	query := func() bool {
 		conn, err := net.DialTCP("tcp", nil, l.address)
 		if err != nil {
