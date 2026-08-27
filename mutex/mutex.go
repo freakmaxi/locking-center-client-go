@@ -37,13 +37,37 @@ func checkKey(key string) {
 	}
 }
 
+// LockingCenter is a client of a Locking-Center server. Every call opens its
+// own short lived connection, so a value is safe to share between goroutines
+// and there is nothing to close.
+//
+// A key is arbitrary bytes, 1 to 127 of them. The methods that take a key
+// panic on an empty or over long one before any network activity, an invalid
+// key is a programming error rather than a transient failure.
 type LockingCenter interface {
+	// Lock acquires the key, waiting in the server's queue until it is free.
+	// It keeps trying through connection failures and returns only once the
+	// key is held.
 	Lock(key string)
+	// TryLock acquires the key only if it is free right now and never waits.
+	// It reports true when the key was acquired, and false when it is held by
+	// somebody else or the server could not be reached, so the caller decides
+	// what to do next.
 	TryLock(key string) bool
+	// Unlock releases the key. It keeps trying until the server confirms.
 	Unlock(key string)
+	// Wait blocks until the key is free and releases it again right away,
+	// without holding it. It is a way to pause until the current holder is
+	// done.
 	Wait(key string)
 
+	// ResetByKey force releases the key whoever holds it. It is the recovery
+	// path for a key that a crashed client left locked.
 	ResetByKey(key string)
+	// ResetBySource force releases every key that the given owner holds. A
+	// nil source lets the server fall back to the address of this
+	// connection. It is the recovery path for a crashed instance, on
+	// Kubernetes usually its pod IP.
 	ResetBySource(sourceAddr *string)
 }
 
@@ -52,10 +76,16 @@ type lockingCenter struct {
 	sourceAddr *string
 }
 
+// NewLockingCenter connects to the server at address ("host:port") and lets
+// the server identify this owner by the address of each connection. It dials
+// once to make sure the server is reachable and returns an error if it is not.
 func NewLockingCenter(address string) (LockingCenter, error) {
 	return NewLockingCenterWithSourceAddr(address, nil)
 }
 
+// NewLockingCenterWithSourceAddr is NewLockingCenter with an explicit source
+// address that identifies this owner, so that ResetBySource can release
+// everything it held after a crash. The source must be at most 127 bytes.
 func NewLockingCenterWithSourceAddr(address string, sourceAddr *string) (LockingCenter, error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
@@ -154,6 +184,11 @@ func (l *lockingCenter) result(conn *net.TCPConn) int {
 	return 1
 }
 
+// Lock acquires the key and blocks until it is held. The server queues the
+// request behind the current holder and answers only when the key is free, so
+// the call may wait for as long as that holder keeps it. A connection failure
+// or a '-' answer is retried every 500ms, the call returns only on success.
+// It panics on an empty or over long key before any network activity.
 func (l *lockingCenter) Lock(key string) {
 	checkKey(key)
 
@@ -200,6 +235,9 @@ func (l *lockingCenter) TryLock(key string) bool {
 	return res == 1
 }
 
+// Unlock releases the key so the next queued request, if any, acquires it. It
+// retries every 500ms until the server confirms. It panics on an empty or
+// over long key before any network activity.
 func (l *lockingCenter) Unlock(key string) {
 	checkKey(key)
 
@@ -224,11 +262,19 @@ func (l *lockingCenter) Unlock(key string) {
 	}
 }
 
+// Wait blocks until the key is free and then releases it right away, without
+// keeping it. It is Lock followed by Unlock: a way to pause until whoever holds
+// the key is done, when there is no work of your own to protect.
 func (l *lockingCenter) Wait(key string) {
 	l.Lock(key)
 	defer l.Unlock(key)
 }
 
+// ResetByKey force releases the key no matter who holds it and lets the queued
+// requests contend for it again. A lock is not tied to its connection, so a
+// client that crashes while holding a key leaves it locked; this is how an
+// operator or a supervisor clears such a stuck lock. It retries every 500ms
+// until the server confirms and panics on an empty or over long key.
 func (l *lockingCenter) ResetByKey(key string) {
 	checkKey(key)
 
@@ -253,6 +299,12 @@ func (l *lockingCenter) ResetByKey(key string) {
 	}
 }
 
+// ResetBySource force releases every key held by the owner identified by
+// sourceAddr, the address a client was constructed with. It is the recovery
+// path for a whole instance that went away, on Kubernetes typically a crashed
+// pod's IP. A nil sourceAddr lets the server fall back to the address of this
+// connection. It retries every 500ms until the server confirms and panics on
+// a source longer than 127 bytes.
 func (l *lockingCenter) ResetBySource(sourceAddr *string) {
 	if sourceAddr != nil && len(*sourceAddr) > maxValueSize {
 		panic(fmt.Sprintf("locking-center: source address can not be longer than %d bytes", maxValueSize))
