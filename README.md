@@ -31,3 +31,15 @@ func main() {
 	m.Unlock("locking-key")
 }
 ```
+
+`Lock` blocks until the key is free. `TryLock` is the non blocking form: it takes the key only if it is free right now
+and returns immediately, so you decide what to do when somebody else holds it.
+
+```go
+if m.TryLock("locking-key") {
+	defer m.Unlock("locking-key")
+	fmt.Println("Got the lock, doing the work.")
+} else {
+	fmt.Println("Someone else holds it, skipping.")
+}
+```

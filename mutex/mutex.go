@@ -16,6 +16,7 @@ const (
 	maUnlock        mutexAction = 2
 	maResetByKey    mutexAction = 3
 	maResetBySource mutexAction = 4
+	maTryLock       mutexAction = 5
 )
 
 var queueRetryDuration = time.Millisecond * 500
@@ -92,7 +93,7 @@ func (l *lockingCenter) preparePackage(action mutexAction, key string, sourceAdd
 	}
 
 	switch action {
-	case maLock, maUnlock, maResetByKey:
+	case maLock, maTryLock, maUnlock, maResetByKey:
 		keySize := int8(len(key))
 		if err := binary.Write(buffer, binary.LittleEndian, keySize); err != nil {
 			return nil, err
@@ -104,7 +105,7 @@ func (l *lockingCenter) preparePackage(action mutexAction, key string, sourceAdd
 	}
 
 	switch action {
-	case maLock, maResetBySource:
+	case maLock, maTryLock, maResetBySource:
 		sourceAddrSize := int8(0)
 		if sourceAddr != nil {
 			sourceAddrSize = int8(len(*sourceAddr))
@@ -177,32 +178,26 @@ func (l *lockingCenter) Lock(key string) {
 	}
 }
 
+// TryLock attempts the lock once and returns immediately, unlike Lock which
+// blocks until the key is free. It reports true when the key was acquired and
+// false when it is held by somebody else, or the server could not be reached,
+// so the caller decides whether to retry, wait or do something else.
 func (l *lockingCenter) TryLock(key string) bool {
 	checkKey(key)
 
-	query := func() int {
-		conn, err := net.DialTCP("tcp", nil, l.address)
-		if err != nil {
-			fmt.Printf("WARN: connection failure (keep trying): %s\n", err)
-			return -1
-		}
-		defer func() { _ = conn.Close() }()
-
-		res, err := l.query(conn, maLock, key, l.sourceAddr)
-		if err != nil {
-			fmt.Printf("WARN: try locking error (keep trying): %s\n", err)
-		}
-		return res
+	conn, err := net.DialTCP("tcp", nil, l.address)
+	if err != nil {
+		fmt.Printf("WARN: try locking connection failure: %s\n", err)
+		return false
 	}
+	defer func() { _ = conn.Close() }()
 
-	for {
-		res := query()
-		if res == -1 {
-			time.Sleep(queueRetryDuration)
-			continue
-		}
-		return res == 1
+	res, err := l.query(conn, maTryLock, key, l.sourceAddr)
+	if err != nil {
+		fmt.Printf("WARN: try locking error: %s\n", err)
+		return false
 	}
+	return res == 1
 }
 
 func (l *lockingCenter) Unlock(key string) {
