@@ -128,3 +128,8 @@ timeout if you need to give up.
 key is held by its current owner, which is unbounded. The client already accounts for this.
 - **Every call is one short-lived TCP connection.** There is no pool to manage and nothing to close.
 - **The client is safe for concurrent use** from many goroutines.
+
+## License
+
+[Apache License 2.0](LICENSE). The Locking-Center server itself is licensed separately under the GPL-3.0; the
+clients are permissive so they can be embedded in any service.
